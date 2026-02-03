@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mini Browser — Play Brotato</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="toolbar">
+    <div class="nav-left">
+      <button id="backBtn" title="Back" aria-label="Back">◀</button>
+      <button id="forwardBtn" title="Forward" aria-label="Forward">▶</button>
+      <button id="reloadBtn" title="Reload" aria-label="Reload">⟳</button>
+      <button id="homeBtn" title="Home" aria-label="Home">🏠</button>
+    </div>
+
+    <div class="address">
+      <input id="urlInput" type="text" placeholder="Enter URL (try https://blobfish.itch.io/brotato)" />
+      <button id="goBtn" title="Go">Go</button>
+    </div>
+
+    <div class="nav-right">
+      <button id="openNewBtn" title="Open in new tab">Open ↗</button>
+      <select id="sizeSelect" title="Viewport size">
+        <option value="100%">Responsive</option>
+        <option value="480px">Mobile (480px)</option>
+        <option value="720px">Tablet (720px)</option>
+        <option value="980px">Desktop (980px)</option>
+      </select>
+    </div>
+  </header>
+
+  <main>
+    <div class="notice" id="notice">Tip: some sites block embedding — if a page refuses to load, use "Open in new tab".</div>
+
+    <div class="browser">
+      <div class="frame-wrap" id="frameWrap">
+        <iframe id="contentFrame"
+                src=""
+                sandbox="allow-scripts allow-same-origin allow-forms"
+                title="Mini Browser content"></iframe>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <small>Mini in-page browser — defaults to Brotato embed. Embedding blocked? Use "Open in new tab".</small>
+  </footer>
+
+  <script>
+    // Default home (Brotato itch.io embed)
+    const HOME_URL = "https://itch.io/embed/1164630";
+
+    // UI refs
+    const backBtn = document.getElementById('backBtn');
+    const forwardBtn = document.getElementById('forwardBtn');
+    const reloadBtn = document.getElementById('reloadBtn');
+    const homeBtn = document.getElementById('homeBtn');
+    const goBtn = document.getElementById('goBtn');
+    const openNewBtn = document.getElementById('openNewBtn');
+    const urlInput = document.getElementById('urlInput');
+    const contentFrame = document.getElementById('contentFrame');
+    const sizeSelect = document.getElementById('sizeSelect');
+    const notice = document.getElementById('notice');
+    const frameWrap = document.getElementById('frameWrap');
+
+    // Simple history stack
+    const historyStack = [];
+    let historyIndex = -1;
+
+    // Helpers
+    function normalizeUrl(raw) {
+      if (!raw) return '';
+      // allow iframe-friendly itch.io embed URLs without protocol (rare), otherwise ensure protocol
+      try {
+        // If user typed an itch.io project page, convert to embed when possible?
+        // But we default to using explicit URLs; auto-add https:// if missing.
+        let url = raw.trim();
+        if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+        return new URL(url).toString();
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function updateControls() {
+      backBtn.disabled = historyIndex <= 0;
+      forwardBtn.disabled = historyIndex >= historyStack.length - 1 || historyIndex === -1;
+      urlInput.value = historyIndex === -1 ? '' : historyStack[historyIndex];
+    }
+
+    function tryLoad(url, pushHistory = true) {
+      const normalized = normalizeUrl(url);
+      if (!normalized) {
+        showNotice('Invalid URL.');
+        return;
+      }
+
+      // Set iframe src
+      contentFrame.src = normalized;
+      // If pushing to history, remove any forward entries then push
+      if (pushHistory) {
+        if (historyIndex < historyStack.length - 1) {
+          historyStack.splice(historyIndex + 1);
+        }
+        historyStack.push(normalized);
+        historyIndex = historyStack.length - 1;
+      }
+      updateControls();
+      showNotice('Loading...');
+
+      // Set a timeout to detect likely embed failure (not guaranteed)
+      let loaded = false;
+      const timer = setTimeout(() => {
+        if (!loaded) {
+          // If the iframe still visually shows blank for a long time, the content may be blocked.
+          showNotice('If the page appears blank the site may block embedding. Use "Open in new tab".');
+        }
+      }, 2500);
+
+      // onload will fire even for cross-origin content in many browsers (but not always for blocked frames)
+      const onLoadHandler = () => {
+        loaded = true;
+        clearTimeout(timer);
+        showNotice('');
+        // We cannot reliably inspect cross-origin frames; if we can read the document.title (same-origin),
+        // we display it in the address input as feedback.
+        try {
+          const t = contentFrame.contentDocument && contentFrame.contentDocument.title;
+          if (t) urlInput.value = historyStack[historyIndex] + ' — ' + t;
+        } catch (e) {
+          // cross-origin — do not attempt to access
+          urlInput.value = historyStack[historyIndex];
+        }
+      };
+
+      contentFrame.onload = onLoadHandler;
+      contentFrame.onerror = () => {
+        clearTimeout(timer);
+        showNotice('Failed to load the page in the iframe. Try "Open in new tab".');
+      };
+    }
+
+    function showNotice(msg) {
+      notice.textContent = msg || 'Tip: some sites block embedding — if a page refuses to load, use "Open in new tab".';
+    }
+
+    // Controls
+    backBtn.addEventListener('click', () => {
+      if (historyIndex > 0) {
+        historyIndex--;
+        contentFrame.src = historyStack[historyIndex];
+        updateControls();
+        showNotice('');
+      }
+    });
+
+    forwardBtn.addEventListener('click', () => {
+      if (historyIndex < historyStack.length - 1) {
+        historyIndex++;
+        contentFrame.src = historyStack[historyIndex];
+        updateControls();
+        showNotice('');
+      }
+    });
+
+    reloadBtn.addEventListener('click', () => {
+      // reload current src
+      if (historyIndex >= 0) {
+        const current = historyStack[historyIndex];
+        contentFrame.src = current;
+        showNotice('Reloading...');
+      } else {
+        showNotice('Nothing to reload.');
+      }
+    });
+
+    homeBtn.addEventListener('click', () => {
+      tryLoad(HOME_URL, true);
+    });
+
+    goBtn.addEventListener('click', () => {
+      tryLoad(urlInput.value, true);
+    });
+
+    // Enter key loads URL
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        tryLoad(urlInput.value, true);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        urlInput.select();
+      }
+    });
+
+    openNewBtn.addEventListener('click', () => {
+      const cur = historyIndex >= 0 ? historyStack[historyIndex] : urlInput.value || HOME_URL;
+      const url = normalizeUrl(cur) || HOME_URL;
+      window.open(url, '_blank', 'noopener');
+    });
+
+    sizeSelect.addEventListener('change', () => {
+      const v = sizeSelect.value;
+      if (v === '100%') {
+        frameWrap.style.maxWidth = '100%';
+      } else {
+        frameWrap.style.maxWidth = v;
+      }
+    });
+
+    // Keyboard shortcuts
+    window.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+        e.preventDefault();
+        reloadBtn.click();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+        e.preventDefault();
+        backBtn.click();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        forwardBtn.click();
+      }
+    });
+
+    // Initialize: load home
+    window.addEventListener('load', () => {
+      // start with embed as the page to play Brotato in many browsers/sites that allow it.
+      tryLoad(HOME_URL, true);
+      // set default size
+      frameWrap.style.maxWidth = '100%';
+      updateControls();
+    });
+  </script>
+</body>
+</html>
